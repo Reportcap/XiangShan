@@ -322,7 +322,7 @@ object Bundles {
     def isHls: Bool = {
       fuType === FuType.ldu.U && LSUOpType.isHlv(fuOpType) || fuType === FuType.stu.U && LSUOpType.isHsv(fuOpType)
     }
-    
+
     def connectEnqRobUop(source: RenameOutUop): Unit = {
       connectSamePort(this, source)
       this.hasException := source.hasException || source.singleStep
@@ -492,6 +492,9 @@ object Bundles {
     // from rename
     val numLsElem = Option.when(params.issueBlockParam.isVecMemIQ)(NumLsElem())
     val rasAction = Option.when(params.needRasAction)(BranchAttribute.RasAction())
+    // psrc are used in datapath to generate regfile's bank Ren
+    val psrc      = Vec(params.numRegSrc, UInt(params.rdPregIdxWidth.W))
+    val psrcVl    = Option.when(params.readVlRf)(UInt(VlPhyRegIdxWidth.W))
     // for mdp
     val storeSetHit    = Option.when(params.issueBlockParam.isLdAddrIQ || params.issueBlockParam.isStAddrIQ)(Bool())
     val waitForRobIdx  = Option.when(params.issueBlockParam.isLdAddrIQ)(new RobPtr)
@@ -521,7 +524,6 @@ object Bundles {
     val pdest     = UInt(PhyRegIdxWidth.W)
     val pdestVl   = Option.when(params.writeVlRf)(UInt(VlPhyRegIdxWidth.W))
     // from dispatch
-    val srcState          = Vec(numSrc, SrcState())
     val srcLoadDependency = Vec(numSrc, Vec(LoadPipelineWidth, UInt(LoadDependencyWidth.W)))
     val debug             = OptionWrapper(backendParams.debugEn, new IssueQueueInDebug)
   }
@@ -941,9 +943,6 @@ object Bundles {
     val flushPipe      = Option.when(exuParams.flushPipe)    (Bool())
     val ftqIdx         = Option.when(exuParams.needFtqPtr)   (new FtqPtr)
     val ftqOffset      = Option.when(exuParams.needFtqPtrOffset)(UInt(FetchBlockInstOffsetWidth.W))
-    // psrc are used in datapath to generate regfile's bank Ren
-    val psrc           = Vec(exuParams.numRegSrc, UInt(exuParams.rdPregIdxWidth.W))
-    val psrcVl         = Option.when(exuParams.readVlRf)(UInt(VlPhyRegIdxWidth.W))
     // dataSources are used in issueQueue to generate regfile Ren
     val dataSources    = Vec(exuParams.numRegSrc, DataSource())
     val exuSources     = Option.when(exuParams.isIQWakeUpSink)(Vec(exuParams.numRegSrc, ExuSource(exuParams)))
