@@ -317,6 +317,7 @@ object Bundles {
     val stdwriteNeed      = Bool()
     val isXSTrap          = Bool()
     val replayInst        = Bool()
+    val isRedundant       = Bool() // redundant thread instruction marker
 
     def isWFI: Bool       = this.fuType === FuType.csr.U && fuOpType === CSROpType.wfi
     def needEnqRab: Bool  = rfWen || fpWen || vecWen || v0Wen
@@ -331,6 +332,7 @@ object Bundles {
       this.stdwriteNeed := FuType.isStore(source.fuType)
       this.isXSTrap     := FuType.isAlu(source.fuType) && (source.fuOpType === ALUOpType.xstrap)
       this.replayInst   := false.B
+      this.isRedundant  := false.B // default: not redundant
     }
   }
 

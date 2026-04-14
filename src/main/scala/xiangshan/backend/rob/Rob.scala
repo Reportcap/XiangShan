@@ -722,8 +722,12 @@ class RobImp(override val wrapper: Rob)(implicit p: Parameters, params: BackendP
   require(RenameWidth <= CommitWidth)
 
   // wiring to csr
+  // redundant thread instructions should not update architectural CSR state
+  val commitValidNotRedundant = VecInit((0 until CommitWidth).map(i =>
+    io.commits.commitValid(i) && !robEntries(deqPtrVec(i).value).isRedundant
+  ))
   val (wflags, dirtyFs) = (0 until CommitWidth).map(i => {
-    val v = io.commits.commitValid(i)
+    val v = commitValidNotRedundant(i)
     val info = io.commits.info(i)
     (v & info.wflags, v & info.dirtyFs)
   }).unzip
@@ -733,7 +737,7 @@ class RobImp(override val wrapper: Rob)(implicit p: Parameters, params: BackendP
     case (w, f) => Mux(w, f, 0.U)
   }).reduce(_ | _)
   val dirtyVs = (0 until CommitWidth).map(i => {
-    val v = io.commits.commitValid(i)
+    val v = commitValidNotRedundant(i)
     val info = io.commits.info(i)
     v & info.dirtyVs
   })
@@ -760,7 +764,7 @@ class RobImp(override val wrapper: Rob)(implicit p: Parameters, params: BackendP
 
   val vxsat = Wire(Valid(Bool()))
   vxsat.valid := io.commits.isCommit && vxsat.bits
-  vxsat.bits := io.commits.commitValid.zip(vxsatDataRead).map {
+  vxsat.bits := commitValidNotRedundant.zip(vxsatDataRead).map {
     case (valid, vxsat) => valid & vxsat
   }.reduce(_ | _)
 
@@ -854,12 +858,12 @@ class RobImp(override val wrapper: Rob)(implicit p: Parameters, params: BackendP
   io.csr.vxsat    := RegNextWithEnable(vxsat)
 
   // commit load/store to lsq
-  val ldCommitVec = VecInit((0 until CommitWidth).map(i => io.commits.commitValid(i) && io.commits.info(i).commitType === CommitType.LOAD))
+  val ldCommitVec = VecInit((0 until CommitWidth).map(i => io.commits.commitValid(i) && io.commits.info(i).commitType === CommitType.LOAD && !robEntries(deqPtrVec(i).value).isRedundant))
   // TODO: Check if meet the require that only set scommit when commit scala store uop
-  val stCommitVec = VecInit((0 until CommitWidth).map(i => io.commits.commitValid(i) && io.commits.info(i).commitType === CommitType.STORE && !robEntries(deqPtrVec(i).value).vls ))
+  val stCommitVec = VecInit((0 until CommitWidth).map(i => io.commits.commitValid(i) && io.commits.info(i).commitType === CommitType.STORE && !robEntries(deqPtrVec(i).value).vls && !robEntries(deqPtrVec(i).value).isRedundant))
   io.lsq.lcommit := RegNext(Mux(io.commits.isCommit, PopCount(ldCommitVec), 0.U))
   io.lsq.scommit := RegNext(Mux(io.commits.isCommit, PopCount(stCommitVec), 0.U))
-  io.lsq.commit := RegNext(io.commits.isCommit && io.commits.commitValid(0))
+  io.lsq.commit := RegNext(io.commits.isCommit && io.commits.commitValid(0) && !robEntries(deqPtrVec(0).value).isRedundant)
   io.lsq.pendingPtr := RegNext(deqPtr)
   io.lsq.pendingPtrNext := RegNext(deqPtrVec_next.head)
 
@@ -1278,7 +1282,7 @@ class RobImp(override val wrapper: Rob)(implicit p: Parameters, params: BackendP
     traceBlockInPipe(i).itype := rawInfo(i).traceBlockInPipe.itype
     traceBlockInPipe(i).iretire := iretireCommit(i)
     traceBlockInPipe(i).ilastsize := rawInfo(i).traceBlockInPipe.ilastsize
-    traceValids(i) := io.commits.isCommit && io.commits.commitValid(i)
+    traceValids(i) := io.commits.isCommit && io.commits.commitValid(i) && !robEntries(deqPtrVec(i).value).isRedundant
     // exception only occur in block(0).
     if(i == 0) {
       when(io.exception.valid){ // trace exception
@@ -1568,7 +1572,7 @@ class RobImp(override val wrapper: Rob)(implicit p: Parameters, params: BackendP
       val dt_skip = Mux(eliminatedMove, false.B, exuOut.isSkipDiff)
       difftest.coreid := io.hartId
       difftest.index := i.U
-      difftest.valid := io.commits.commitValid(i) && io.commits.isCommit
+      difftest.valid := io.commits.commitValid(i) && io.commits.isCommit && !robEntries(deqPtrVec(i).value).isRedundant
       difftest.skip := dt_skip
       difftest.isRVC := isRVC
       difftest.rfwen := io.commits.commitValid(i) && commitInfo.rfWen && commitInfo.debug_ldest.get =/= 0.U
@@ -1606,7 +1610,7 @@ class RobImp(override val wrapper: Rob)(implicit p: Parameters, params: BackendP
         difftestLoadEvent.coreid := io.hartId
         difftestLoadEvent.index := i.U
         val loadCheck = (FuType.isAMO(uop.debug_fuType.getOrElse(0.U)) || FuType.isLoad(uop.debug_fuType.getOrElse(0.U)) || isVLoad) && !dt_skip
-        difftestLoadEvent.valid    := io.commits.commitValid(i) && io.commits.isCommit && loadCheck
+        difftestLoadEvent.valid    := io.commits.commitValid(i) && io.commits.isCommit && loadCheck && !robEntries(deqPtrVec(i).value).isRedundant
         difftestLoadEvent.paddr    := exuOut.paddr
         difftestLoadEvent.opType   := uop.debug_fuOpType.getOrElse(0.U)
         difftestLoadEvent.isAtomic := FuType.isAMO(uop.debug_fuType.getOrElse(0.U))

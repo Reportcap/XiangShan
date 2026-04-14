@@ -58,6 +58,7 @@ object RobBundles extends HasCircularQueuePtrHelper {
     // VTypeBuffer
     val needVTB = Bool()
     val isHls = Bool()
+    val isRedundant = Bool() // redundant thread instruction marker
     // data end
 
     // trace
@@ -143,6 +144,7 @@ object RobBundles extends HasCircularQueuePtrHelper {
     // robEntry.needVTB will be asserted by the first uop, so set it false here
     robEntry.needVTB := robEnq.isVset || robEnq.vpu.isVleff
     robEntry.isHls := robEnq.isHls
+    robEntry.isRedundant := robEnq.isRedundant
     robEntry.rfWen := robEnq.rfWen
     robEntry.fpWen := robEnq.dirtyFs
     robEntry.dirtyVs := robEnq.dirtyVs
