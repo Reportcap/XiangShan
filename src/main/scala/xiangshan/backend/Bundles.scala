@@ -184,6 +184,7 @@ object Bundles {
     val lastUop = Bool()
     val numWB = UInt(log2Up(MaxUopSize).W) // rob need this
     val needFrm = new NeedFrmBundle
+    val threadId = Bool() // 0=main thread, 1=redundant thread
     val debug = OptionWrapper(backendParams.debugEn, new DecodeOutUopDebug())
 
     private def allSignals = srcType.take(3) ++ Seq(fuType, fuOpType, rfWen, fpWen, vecWen,
@@ -300,6 +301,7 @@ object Bundles {
     val debug = OptionWrapper(backendParams.debugEn, new RenameOutUopDebug())
     val crossFtqCommit = UInt(2.W) // use to caculate the ftq idx of ftqentry when commit
     val crossFtq = Bool() // use to caculate the ftq idx of brh instructions when pass to exu
+    val threadId = Bool() // 0=main thread, 1=redundant thread
     def isLUI: Bool = this.fuType === FuType.alu.U && (this.selImm === SelImm.IMM_U || this.selImm === SelImm.IMM_LUI32)
     def needWriteRf: Bool = rfWen || fpWen || vecWen || v0Wen || vlWen
     def isAMOCAS: Bool = FuType.isAMO(fuType) && LSUOpType.isAMOCAS(fuOpType)
@@ -332,7 +334,7 @@ object Bundles {
       this.stdwriteNeed := FuType.isStore(source.fuType)
       this.isXSTrap     := FuType.isAlu(source.fuType) && (source.fuOpType === ALUOpType.xstrap)
       this.replayInst   := false.B
-      this.isRedundant  := false.B // default: not redundant
+      this.isRedundant  := source.threadId // redundant thread marker from threadId
     }
   }
 

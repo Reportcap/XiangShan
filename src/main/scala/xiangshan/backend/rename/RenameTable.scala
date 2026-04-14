@@ -232,6 +232,18 @@ class RenameTableWrapper(implicit p: Parameters) extends XSModule {
     val vlReadPorts = Vec(RenameWidth, new RatReadPort(log2Ceil(VlLogicRegs)))
     val vlRenamePorts = Vec(RenameWidth, Input(new RatWritePort(log2Ceil(VlLogicRegs))))
 
+    // Redundant thread rename ports (independent RATs sharing physical register pool)
+    val redIntReadPorts   = Vec(RenameWidth, Vec(2, new RatReadPort(log2Ceil(IntLogicRegs))))
+    val redIntRenamePorts = Vec(RenameWidth, Input(new RatWritePort(log2Ceil(IntLogicRegs))))
+    val redFpReadPorts    = Vec(RenameWidth, Vec(3, new RatReadPort(log2Ceil(FpLogicRegs))))
+    val redFpRenamePorts  = Vec(RenameWidth, Input(new RatWritePort(log2Ceil(FpLogicRegs))))
+    val redVecReadPorts   = Vec(RenameWidth, Vec(numVecRatPorts, new RatReadPort(log2Ceil(VecLogicRegs))))
+    val redVecRenamePorts = Vec(RenameWidth, Input(new RatWritePort(log2Ceil(VecLogicRegs))))
+    val redV0ReadPorts    = Vec(RenameWidth, new RatReadPort(log2Ceil(V0LogicRegs)))
+    val redV0RenamePorts  = Vec(RenameWidth, Input(new RatWritePort(log2Ceil(V0LogicRegs))))
+    val redVlReadPorts    = Vec(RenameWidth, new RatReadPort(log2Ceil(VlLogicRegs)))
+    val redVlRenamePorts  = Vec(RenameWidth, Input(new RatWritePort(log2Ceil(VlLogicRegs))))
+
     val int_old_pdest = Vec(RabCommitWidth, Output(UInt(PhyRegIdxWidth.W)))
     val fp_old_pdest = Vec(RabCommitWidth, Output(UInt(PhyRegIdxWidth.W)))
     val vec_old_pdest = Vec(RabCommitWidth, Output(UInt(PhyRegIdxWidth.W)))
@@ -450,6 +462,84 @@ class RenameTableWrapper(implicit p: Parameters) extends XSModule {
       diff.wen := io.diffVlCommits.get.commitValid(i)
       diff.addr := 0.U
       diff.data := io.diffVlCommits.get.pdestVl(i)
+    }
+  }
+
+  // ====================================================================
+  // Redundant thread rename tables
+  // Independent speculative tables sharing the physical register pool.
+  // No architectural state, snapshots, redirect, or difftest needed.
+  // ====================================================================
+  val redIntRat = Module(new RenameTable(Reg_I, 0))
+  val redFpRat  = Module(new RenameTable(Reg_F, 0))
+  val redVecRat = Module(new RenameTable(Reg_V, 0))
+  val redV0Rat  = Module(new RenameTable(Reg_V0, 0))
+  val redVlRat  = Module(new RenameTable(Reg_Vl, 0))
+
+  val redRats = Seq(redIntRat, redFpRat, redVecRat, redV0Rat, redVlRat)
+
+  // Connect read ports
+  redIntRat.io.readPorts <> io.redIntReadPorts.flatten
+  redFpRat.io.readPorts  <> io.redFpReadPorts.flatten
+  redVecRat.io.readPorts <> io.redVecReadPorts.flatten
+  redV0Rat.io.readPorts  <> io.redV0ReadPorts
+  redVlRat.io.readPorts  <> io.redVlReadPorts
+
+  // No redirect handling for redundant thread (killed on redirect, no recovery needed)
+  for (rat <- redRats) {
+    rat.io.redirect := false.B
+    rat.io.snpt := 0.U.asTypeOf(io.snpt)
+  }
+
+  // No architectural writes (redundant thread never commits to arch state)
+  // No walk writes (redundant thread doesn't trigger pipeline walks)
+  for (rat <- redRats) {
+    rat.io.archWritePorts.foreach { w =>
+      w.wen  := false.B
+      w.addr := 0.U
+      w.data := 0.U
+    }
+    for (spec <- rat.io.specWritePorts) {
+      spec.wen  := false.B
+      spec.addr := 0.U
+      spec.data := 0.U
+    }
+  }
+
+  // Rename speculative writes from redundant thread (highest priority)
+  for ((spec, rename) <- redIntRat.io.specWritePorts.zip(io.redIntRenamePorts)) {
+    when(rename.wen) {
+      spec.wen  := true.B
+      spec.addr := rename.addr
+      spec.data := rename.data
+    }
+  }
+  for ((spec, rename) <- redFpRat.io.specWritePorts.zip(io.redFpRenamePorts)) {
+    when(rename.wen) {
+      spec.wen  := true.B
+      spec.addr := rename.addr
+      spec.data := rename.data
+    }
+  }
+  for ((spec, rename) <- redVecRat.io.specWritePorts.zip(io.redVecRenamePorts)) {
+    when(rename.wen) {
+      spec.wen  := true.B
+      spec.addr := rename.addr
+      spec.data := rename.data
+    }
+  }
+  for ((spec, rename) <- redV0Rat.io.specWritePorts.zip(io.redV0RenamePorts)) {
+    when(rename.wen) {
+      spec.wen  := true.B
+      spec.addr := rename.addr
+      spec.data := rename.data
+    }
+  }
+  for ((spec, rename) <- redVlRat.io.specWritePorts.zip(io.redVlRenamePorts)) {
+    when(rename.wen) {
+      spec.wen  := true.B
+      spec.addr := rename.addr
+      spec.data := rename.data
     }
   }
 }

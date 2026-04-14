@@ -125,6 +125,12 @@ class Rename(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHe
   val vecRenamePorts = Wire(Vec(RenameWidth, new RatWritePort(log2Ceil(VecLogicRegs))))
   val v0RenamePorts  = Wire(Vec(RenameWidth, new RatWritePort(log2Ceil(V0LogicRegs))))
   val vlRenamePorts  = Wire(Vec(RenameWidth, new RatWritePort(log2Ceil(VlLogicRegs))))
+  // Redundant thread rename ports (route speculative writes to independent RATs)
+  val redIntRenamePorts = Wire(Vec(RenameWidth, new RatWritePort(log2Ceil(IntLogicRegs))))
+  val redFpRenamePorts  = Wire(Vec(RenameWidth, new RatWritePort(log2Ceil(FpLogicRegs))))
+  val redVecRenamePorts = Wire(Vec(RenameWidth, new RatWritePort(log2Ceil(VecLogicRegs))))
+  val redV0RenamePorts  = Wire(Vec(RenameWidth, new RatWritePort(log2Ceil(V0LogicRegs))))
+  val redVlRenamePorts  = Wire(Vec(RenameWidth, new RatWritePort(log2Ceil(VlLogicRegs))))
 
   val int_need_free = Wire(Vec(RabCommitWidth, Bool()))
   val int_old_pdest = Wire(Vec(RabCommitWidth, UInt(PhyRegIdxWidth.W)))
@@ -204,6 +210,49 @@ class Rename(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHe
   io.v0ReadPorts  <> v0ReadPorts
   io.vlReadPorts  <> vlReadPorts
 
+  // --- Redundant thread: connect read ports to same lsrc addresses ---
+  for (i <- 0 until RenameWidth) {
+    for (j <- 0 until numIntRatPorts) {
+      rat.io.redIntReadPorts(i)(j).addr := io.intReadPorts(i)(j).addr
+      rat.io.redIntReadPorts(i)(j).hold := io.intReadPorts(i)(j).hold
+    }
+    for (j <- 0 until numFpRatPorts) {
+      rat.io.redFpReadPorts(i)(j).addr := io.fpReadPorts(i)(j).addr
+      rat.io.redFpReadPorts(i)(j).hold := io.fpReadPorts(i)(j).hold
+    }
+    for (j <- 0 until numVecRatPorts) {
+      rat.io.redVecReadPorts(i)(j).addr := io.vecReadPorts(i)(j).addr
+      rat.io.redVecReadPorts(i)(j).hold := io.vecReadPorts(i)(j).hold
+    }
+    rat.io.redV0ReadPorts(i).addr := io.v0ReadPorts(i).addr
+    rat.io.redV0ReadPorts(i).hold := io.v0ReadPorts(i).hold
+    rat.io.redVlReadPorts(i).addr := io.vlReadPorts(i).addr
+    rat.io.redVlReadPorts(i).hold := io.vlReadPorts(i).hold
+  }
+  // Muxed read data: select main or redundant RAT based on threadId
+  private val threadId = io.in.map(_.bits.threadId)
+  private val muxedIntData = VecInit((0 until RenameWidth).map(i =>
+    VecInit((0 until numIntRatPorts).map(j =>
+      Mux(threadId(i), rat.io.redIntReadPorts(i)(j).data, intReadPortsData(i)(j))
+    ))
+  ))
+  private val muxedFpData = VecInit((0 until RenameWidth).map(i =>
+    VecInit((0 until numFpRatPorts).map(j =>
+      Mux(threadId(i), rat.io.redFpReadPorts(i)(j).data, fpReadPortsData(i)(j))
+    ))
+  ))
+  private val muxedVecData = VecInit((0 until RenameWidth).map(i =>
+    VecInit((0 until numVecRatPorts).map(j =>
+      Mux(threadId(i), rat.io.redVecReadPorts(i)(j).data, vecReadPortsData(i)(j))
+    ))
+  ))
+  private val muxedV0Data = VecInit((0 until RenameWidth).map(i =>
+    Mux(threadId(i), rat.io.redV0ReadPorts(i).data, v0ReadPortsData(i))
+  ))
+  private val muxedVlData = VecInit((0 until RenameWidth).map(i =>
+    Mux(threadId(i), rat.io.redVlReadPorts(i).data, vlReadPortsData(i))
+  ))
+
   rat.io.snpt <> io.ratSnpt
 
   rat.io.intRenamePorts := intRenamePorts
@@ -211,6 +260,12 @@ class Rename(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHe
   rat.io.vecRenamePorts := vecRenamePorts
   rat.io.v0RenamePorts  := v0RenamePorts
   rat.io.vlRenamePorts  := vlRenamePorts
+
+  rat.io.redIntRenamePorts := redIntRenamePorts
+  rat.io.redFpRenamePorts  := redFpRenamePorts
+  rat.io.redVecRenamePorts := redVecRenamePorts
+  rat.io.redV0RenamePorts  := redV0RenamePorts
+  rat.io.redVlRenamePorts  := redVlRenamePorts
 
   rat.io.hartId := io.hartId
   rat.io.redirect := io.redirect.valid
@@ -524,17 +579,17 @@ class Rename(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHe
     ).orR
     uops(i).debug.foreach(_.debug_sim_trig := (compressMasksVec(i) & Cat(io.in.map(_.bits.instr === XSDebugDecode.SIM_TRIG).reverse)).orR)
     // psrc0,psrc1,psrc2 don't require v0ReadPorts because their srcType can distinguish whether they are V0 or not
-    uops(i).psrc(0) := Mux1H(uops(i).srcType(0)(2, 0), Seq(intReadPortsData(i)(0), fpReadPortsData(i)(0), vecReadPortsData(i)(0)))
-    uops(i).psrc(1) := Mux1H(uops(i).srcType(1)(2, 0), Seq(intReadPortsData(i)(1), fpReadPortsData(i)(1), vecReadPortsData(i)(1)))
-    uops(i).psrc(2) := Mux1H(uops(i).srcType(2)(2, 1), Seq(fpReadPortsData(i)(2), vecReadPortsData(i)(2)))
-    uops(i).psrc(3) := v0ReadPortsData(i)(0)
-    uops(i).psrcVl := vlReadPortsData(i).head
-    uops(i).psrcIntForMove := intReadPortsData(i).head
+    uops(i).psrc(0) := Mux1H(uops(i).srcType(0)(2, 0), Seq(muxedIntData(i)(0), muxedFpData(i)(0), muxedVecData(i)(0)))
+    uops(i).psrc(1) := Mux1H(uops(i).srcType(1)(2, 0), Seq(muxedIntData(i)(1), muxedFpData(i)(1), muxedVecData(i)(1)))
+    uops(i).psrc(2) := Mux1H(uops(i).srcType(2)(2, 1), Seq(muxedFpData(i)(2), muxedVecData(i)(2)))
+    uops(i).psrc(3) := muxedV0Data(i)
+    uops(i).psrcVl := muxedVlData(i).head
+    uops(i).psrcIntForMove := muxedIntData(i).head
 
     // int psrc2 should be bypassed from next instruction if it is fused
     if (i < RenameWidth - 1) {
       when (io.fusionInfo(i).rs2FromRs2 || io.fusionInfo(i).rs2FromRs1) {
-        uops(i).psrc(1) := Mux(io.fusionInfo(i).rs2FromRs2, intReadPortsData(i + 1)(1), intReadPortsData(i + 1)(0))
+        uops(i).psrc(1) := Mux(io.fusionInfo(i).rs2FromRs2, muxedIntData(i + 1)(1), muxedIntData(i + 1)(0))
       }.elsewhen(io.fusionInfo(i).rs2FromZero) {
         uops(i).psrc(1) := 0.U
       }
@@ -790,25 +845,46 @@ class Rename(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHe
 
     // I. RAT Update
     // When redirect happens (mis-prediction), don't update the rename table
-    intRenamePorts(i).wen  := intSpecWen(i)
+    intRenamePorts(i).wen  := intSpecWen(i) && !threadId(i)
     intRenamePorts(i).addr := inVec(i).ldest(log2Ceil(IntLogicRegs) - 1, 0)
     intRenamePorts(i).data := io.out(i).bits.pdest
 
-    fpRenamePorts(i).wen  := fpSpecWen(i)
+    fpRenamePorts(i).wen  := fpSpecWen(i) && !threadId(i)
     fpRenamePorts(i).addr := inVec(i).ldest(log2Ceil(FpLogicRegs) - 1, 0)
     fpRenamePorts(i).data := fpFreeList.io.allocatePhyReg(i)
 
-    vecRenamePorts(i).wen := vecSpecWen(i)
+    vecRenamePorts(i).wen := vecSpecWen(i) && !threadId(i)
     vecRenamePorts(i).addr := inVec(i).ldest(log2Ceil(VecLogicRegs) - 1, 0)
     vecRenamePorts(i).data := vecFreeList.io.allocatePhyReg(i)
 
-    v0RenamePorts(i).wen := v0SpecWen(i)
+    v0RenamePorts(i).wen := v0SpecWen(i) && !threadId(i)
     v0RenamePorts(i).addr := inVec(i).ldest(log2Ceil(V0LogicRegs) - 1, 0)
     v0RenamePorts(i).data := v0FreeList.io.allocatePhyReg(i)
 
-    vlRenamePorts(i).wen := vlSpecWen(i)
+    vlRenamePorts(i).wen := vlSpecWen(i) && !threadId(i)
     vlRenamePorts(i).addr := 0.U // only one vl reg
     vlRenamePorts(i).data := vlFreeList.io.allocatePhyReg(i)
+
+    // Redundant thread: route speculative writes to independent RATs
+    redIntRenamePorts(i).wen  := intSpecWen(i) && threadId(i)
+    redIntRenamePorts(i).addr := inVec(i).ldest(log2Ceil(IntLogicRegs) - 1, 0)
+    redIntRenamePorts(i).data := io.out(i).bits.pdest
+
+    redFpRenamePorts(i).wen  := fpSpecWen(i) && threadId(i)
+    redFpRenamePorts(i).addr := inVec(i).ldest(log2Ceil(FpLogicRegs) - 1, 0)
+    redFpRenamePorts(i).data := fpFreeList.io.allocatePhyReg(i)
+
+    redVecRenamePorts(i).wen := vecSpecWen(i) && threadId(i)
+    redVecRenamePorts(i).addr := inVec(i).ldest(log2Ceil(VecLogicRegs) - 1, 0)
+    redVecRenamePorts(i).data := vecFreeList.io.allocatePhyReg(i)
+
+    redV0RenamePorts(i).wen := v0SpecWen(i) && threadId(i)
+    redV0RenamePorts(i).addr := inVec(i).ldest(log2Ceil(V0LogicRegs) - 1, 0)
+    redV0RenamePorts(i).data := v0FreeList.io.allocatePhyReg(i)
+
+    redVlRenamePorts(i).wen := vlSpecWen(i) && threadId(i)
+    redVlRenamePorts(i).addr := 0.U
+    redVlRenamePorts(i).data := vlFreeList.io.allocatePhyReg(i)
 
     // II. Free List Update
     intFreeList.io.freeReq(i) := int_need_free(i)
