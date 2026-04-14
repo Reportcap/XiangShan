@@ -377,6 +377,7 @@ class RabCommitInfo(implicit p: Parameters) extends XSBundle {
   val v0Wen = Bool()
   val vlWen = Bool()
   val isMove = Bool()
+  val isRedundant = Bool() // redundant thread instruction marker
 }
 
 class RabCommitIO(implicit p: Parameters) extends XSBundle {

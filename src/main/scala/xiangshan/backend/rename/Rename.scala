@@ -281,6 +281,14 @@ class Rename(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHe
   v0_old_pdest := rat.io.v0_old_pdest
   vl_old_pdest := rat.io.vl_old_pdest
 
+  // Redundant RAT old_pdest and need_free signals
+  private val red_int_old_pdest = rat.io.red_int_old_pdest
+  private val red_fp_old_pdest  = rat.io.red_fp_old_pdest
+  private val red_vec_old_pdest = rat.io.red_vec_old_pdest
+  private val red_v0_old_pdest  = rat.io.red_v0_old_pdest
+  private val red_vl_old_pdest  = rat.io.red_vl_old_pdest
+  private val red_int_need_free = rat.io.red_int_need_free
+
   debug_int_rat.foreach(_ := rat.io.debug_int_rat.get)
   debug_fp_rat.foreach (_ := rat.io.debug_fp_rat.get)
   debug_vec_rat.foreach(_ := rat.io.debug_vec_rat.get)
@@ -887,14 +895,17 @@ class Rename(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHe
     redVlRenamePorts(i).data := vlFreeList.io.allocatePhyReg(i)
 
     // II. Free List Update
-    intFreeList.io.freeReq(i) := int_need_free(i)
-    intFreeList.io.freePhyReg(i) := RegNext(int_old_pdest(i))
+    // Merge main and redundant RAT need_free: at most one is active per index
+    val combined_int_need_free = int_need_free(i) || red_int_need_free(i)
+    val combined_int_old_pdest = Mux(red_int_need_free(i), red_int_old_pdest(i), int_old_pdest(i))
+    intFreeList.io.freeReq(i) := combined_int_need_free
+    intFreeList.io.freePhyReg(i) := RegNext(combined_int_old_pdest)
     fpFreeList.io.freeReq(i)  := GatedValidRegNext(commitValid && needDestRegCommit(Reg_F, io.rabCommits.info(i)))
-    fpFreeList.io.freePhyReg(i) := fp_old_pdest(i)
+    fpFreeList.io.freePhyReg(i) := Mux(io.rabCommits.info(i).isRedundant, red_fp_old_pdest(i), fp_old_pdest(i))
     vecFreeList.io.freeReq(i)  := GatedValidRegNext(commitValid && needDestRegCommit(Reg_V, io.rabCommits.info(i)))
-    vecFreeList.io.freePhyReg(i) := vec_old_pdest(i)
+    vecFreeList.io.freePhyReg(i) := Mux(io.rabCommits.info(i).isRedundant, red_vec_old_pdest(i), vec_old_pdest(i))
     v0FreeList.io.freeReq(i) := GatedValidRegNext(commitValid && needDestRegCommit(Reg_V0, io.rabCommits.info(i)))
-    v0FreeList.io.freePhyReg(i) := v0_old_pdest(i)
+    v0FreeList.io.freePhyReg(i) := Mux(io.rabCommits.info(i).isRedundant, red_v0_old_pdest(i), v0_old_pdest(i))
     vlFreeList.io.freeReq(i) := GatedValidRegNext(io.vlCommits.isCommit && io.vlCommits.commitValid(i))
     vlFreeList.io.freePhyReg(i) := vl_old_pdest(i)
   }

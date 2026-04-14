@@ -416,8 +416,8 @@ class RobImp(override val wrapper: Rob)(implicit p: Parameters, params: BackendP
     sink.bits := source.bits
   }
 
-  private val commitIsVTypeVec = VecInit(io.commits.commitValid.zip(io.commits.info).map { case (valid, info) => io.commits.isCommit && valid && info.needVTB })
-  private val walkIsVTypeVec = VecInit(io.commits.walkValid.zip(walkInfo).map { case (valid, info) => io.commits.isWalk && valid && info.needVTB })
+  private val commitIsVTypeVec = VecInit(io.commits.commitValid.zip(io.commits.info).zipWithIndex.map { case ((valid, info), i) => io.commits.isCommit && valid && info.needVTB && !robEntries(deqPtrVec(i).value).isRedundant })
+  private val walkIsVTypeVec = VecInit(io.commits.walkValid.zip(walkInfo).zipWithIndex.map { case ((valid, info), i) => io.commits.isWalk && valid && info.needVTB && !robEntries(deqPtrVec(i).value).isRedundant })
   vtypeBuffer.io.fromRob.commitSize := PopCount(commitIsVTypeVec)
   vtypeBuffer.io.fromRob.walkSize := PopCount(walkIsVTypeVec)
   vtypeBuffer.io.snpt := io.snpt
@@ -664,7 +664,7 @@ class RobImp(override val wrapper: Rob)(implicit p: Parameters, params: BackendP
   XSPerfAccumulate("flush_pipe_num", io.flushOut.valid && isFlushPipe)
   XSPerfAccumulate("replay_inst_num", io.flushOut.valid && isFlushPipe && deqHasReplayInst)
 
-  val exceptionHappen = (state === s_idle) && deqPtrEntryValid && (intrEnable || deqHasException && (!deqIsVlsException || deqVlsCanCommit)) && !lastCycleFlush
+  val exceptionHappen = (state === s_idle) && deqPtrEntryValid && (intrEnable || deqHasException && (!deqIsVlsException || deqVlsCanCommit)) && !lastCycleFlush && !deqPtrEntry.isRedundant
   io.exception.valid := RegNext(exceptionHappen)
   io.exception.bits.pc := RegEnable(debug_deqUop.debug_pc.getOrElse(0.U), exceptionHappen)
   io.exception.bits.gpaddr := io.readGPAMemData.gpaddr

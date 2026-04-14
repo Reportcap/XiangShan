@@ -250,6 +250,15 @@ class RenameTableWrapper(implicit p: Parameters) extends XSModule {
     val v0_old_pdest = Vec(RabCommitWidth, Output(UInt(PhyRegIdxWidth.W)))
     val vl_old_pdest = Vec(RabCommitWidth, Output(UInt(PhyRegIdxWidth.W)))
     val int_need_free = Vec(RabCommitWidth, Output(Bool()))
+
+    // Redundant thread RAT old_pdest and need_free for FreeList
+    val red_int_old_pdest = Vec(RabCommitWidth, Output(UInt(PhyRegIdxWidth.W)))
+    val red_fp_old_pdest  = Vec(RabCommitWidth, Output(UInt(PhyRegIdxWidth.W)))
+    val red_vec_old_pdest = Vec(RabCommitWidth, Output(UInt(PhyRegIdxWidth.W)))
+    val red_v0_old_pdest  = Vec(RabCommitWidth, Output(UInt(PhyRegIdxWidth.W)))
+    val red_vl_old_pdest  = Vec(RabCommitWidth, Output(UInt(PhyRegIdxWidth.W)))
+    val red_int_need_free = Vec(RabCommitWidth, Output(Bool()))
+
     val snpt = Input(new SnapshotPort)
 
     // for debug assertions
@@ -283,13 +292,13 @@ class RenameTableWrapper(implicit p: Parameters) extends XSModule {
   io.int_need_free := intRat.io.need_free
   val intDestValid = io.rabCommits.info.map(_.rfWen)
   for ((arch, i) <- intRat.io.archWritePorts.zipWithIndex) {
-    arch.wen  := io.rabCommits.isCommit && io.rabCommits.commitValid(i) && intDestValid(i)
+    arch.wen  := io.rabCommits.isCommit && io.rabCommits.commitValid(i) && intDestValid(i) && !io.rabCommits.info(i).isRedundant
     arch.addr := io.rabCommits.info(i).ldest
     arch.data := io.rabCommits.info(i).pdest
     XSError(arch.wen && arch.addr === 0.U && arch.data =/= 0.U, "pdest for $0 should be 0\n")
   }
   for ((spec, i) <- intRat.io.specWritePorts.zipWithIndex) {
-    spec.wen  := io.rabCommits.isWalk && io.rabCommits.walkValid(i) && intDestValid(i)
+    spec.wen  := io.rabCommits.isWalk && io.rabCommits.walkValid(i) && intDestValid(i) && !io.rabCommits.info(i).isRedundant
     spec.addr := io.rabCommits.info(i).ldest
     spec.data := io.rabCommits.info(i).pdest
     XSError(spec.wen && spec.addr === 0.U && spec.data =/= 0.U, "pdest for $0 should be 0\n")
@@ -322,12 +331,12 @@ class RenameTableWrapper(implicit p: Parameters) extends XSModule {
   io.fp_old_pdest := fpRat.io.old_pdest
 
   for ((arch, i) <- fpRat.io.archWritePorts.zipWithIndex) {
-    arch.wen  := io.rabCommits.isCommit && io.rabCommits.commitValid(i) && io.rabCommits.info(i).fpWen
+    arch.wen  := io.rabCommits.isCommit && io.rabCommits.commitValid(i) && io.rabCommits.info(i).fpWen && !io.rabCommits.info(i).isRedundant
     arch.addr := io.rabCommits.info(i).ldest
     arch.data := io.rabCommits.info(i).pdest
   }
   for ((spec, i) <- fpRat.io.specWritePorts.zipWithIndex) {
-    spec.wen  := io.rabCommits.isWalk && io.rabCommits.walkValid(i) && io.rabCommits.info(i).fpWen
+    spec.wen  := io.rabCommits.isWalk && io.rabCommits.walkValid(i) && io.rabCommits.info(i).fpWen && !io.rabCommits.info(i).isRedundant
     spec.addr := io.rabCommits.info(i).ldest
     spec.data := io.rabCommits.info(i).pdest
   }
@@ -370,12 +379,12 @@ class RenameTableWrapper(implicit p: Parameters) extends XSModule {
     dontTouch(vecRat.io)
   }
   for ((arch, i) <- vecRat.io.archWritePorts.zipWithIndex) {
-    arch.wen  := io.rabCommits.isCommit && io.rabCommits.commitValid(i) && io.rabCommits.info(i).vecWen
+    arch.wen  := io.rabCommits.isCommit && io.rabCommits.commitValid(i) && io.rabCommits.info(i).vecWen && !io.rabCommits.info(i).isRedundant
     arch.addr := io.rabCommits.info(i).ldest
     arch.data := io.rabCommits.info(i).pdest
   }
   for ((spec, i) <- vecRat.io.specWritePorts.zipWithIndex) {
-    spec.wen  := io.rabCommits.isWalk && io.rabCommits.walkValid(i) && io.rabCommits.info(i).vecWen
+    spec.wen  := io.rabCommits.isWalk && io.rabCommits.walkValid(i) && io.rabCommits.info(i).vecWen && !io.rabCommits.info(i).isRedundant
     spec.addr := io.rabCommits.info(i).ldest
     spec.data := io.rabCommits.info(i).pdest
   }
@@ -405,12 +414,12 @@ class RenameTableWrapper(implicit p: Parameters) extends XSModule {
     dontTouch(v0Rat.io)
   }
   for ((arch, i) <- v0Rat.io.archWritePorts.zipWithIndex) {
-    arch.wen := io.rabCommits.isCommit && io.rabCommits.commitValid(i) && io.rabCommits.info(i).v0Wen
+    arch.wen := io.rabCommits.isCommit && io.rabCommits.commitValid(i) && io.rabCommits.info(i).v0Wen && !io.rabCommits.info(i).isRedundant
     arch.addr := io.rabCommits.info(i).ldest
     arch.data := io.rabCommits.info(i).pdest
   }
   for ((spec, i) <- v0Rat.io.specWritePorts.zipWithIndex) {
-    spec.wen := io.rabCommits.isWalk && io.rabCommits.walkValid(i) && io.rabCommits.info(i).v0Wen
+    spec.wen := io.rabCommits.isWalk && io.rabCommits.walkValid(i) && io.rabCommits.info(i).v0Wen && !io.rabCommits.info(i).isRedundant
     spec.addr := io.rabCommits.info(i).ldest
     spec.data := io.rabCommits.info(i).pdest
   }
@@ -485,26 +494,75 @@ class RenameTableWrapper(implicit p: Parameters) extends XSModule {
   redV0Rat.io.readPorts  <> io.redV0ReadPorts
   redVlRat.io.readPorts  <> io.redVlReadPorts
 
-  // No redirect handling for redundant thread (killed on redirect, no recovery needed)
+  // Redundant RAT redirect: restore to arch_table on redirect (no snapshot)
   for (rat <- redRats) {
-    rat.io.redirect := false.B
+    rat.io.redirect := io.redirect
     rat.io.snpt := 0.U.asTypeOf(io.snpt)
   }
 
-  // No architectural writes (redundant thread never commits to arch state)
-  // No walk writes (redundant thread doesn't trigger pipeline walks)
-  for (rat <- redRats) {
-    rat.io.archWritePorts.foreach { w =>
-      w.wen  := false.B
-      w.addr := 0.U
-      w.data := 0.U
-    }
-    for (spec <- rat.io.specWritePorts) {
-      spec.wen  := false.B
-      spec.addr := 0.U
-      spec.data := 0.U
-    }
+  // Redundant RAT arch writes: only for isRedundant commits
+  // This computes old_pdest and need_free for physical register recycling
+  for ((arch, i) <- redIntRat.io.archWritePorts.zipWithIndex) {
+    arch.wen  := io.rabCommits.isCommit && io.rabCommits.commitValid(i) && io.rabCommits.info(i).rfWen && io.rabCommits.info(i).isRedundant
+    arch.addr := io.rabCommits.info(i).ldest
+    arch.data := io.rabCommits.info(i).pdest
   }
+  for ((arch, i) <- redFpRat.io.archWritePorts.zipWithIndex) {
+    arch.wen  := io.rabCommits.isCommit && io.rabCommits.commitValid(i) && io.rabCommits.info(i).fpWen && io.rabCommits.info(i).isRedundant
+    arch.addr := io.rabCommits.info(i).ldest
+    arch.data := io.rabCommits.info(i).pdest
+  }
+  for ((arch, i) <- redVecRat.io.archWritePorts.zipWithIndex) {
+    arch.wen  := io.rabCommits.isCommit && io.rabCommits.commitValid(i) && io.rabCommits.info(i).vecWen && io.rabCommits.info(i).isRedundant
+    arch.addr := io.rabCommits.info(i).ldest
+    arch.data := io.rabCommits.info(i).pdest
+  }
+  for ((arch, i) <- redV0Rat.io.archWritePorts.zipWithIndex) {
+    arch.wen  := io.rabCommits.isCommit && io.rabCommits.commitValid(i) && io.rabCommits.info(i).v0Wen && io.rabCommits.info(i).isRedundant
+    arch.addr := io.rabCommits.info(i).ldest
+    arch.data := io.rabCommits.info(i).pdest
+  }
+  // vl: no isRedundant filtering for now (vl writes are rare, handled separately)
+  for (arch <- redVlRat.io.archWritePorts) {
+    arch.wen  := false.B
+    arch.addr := 0.U
+    arch.data := 0.U
+  }
+
+  // Redundant RAT walk writes: only for isRedundant walks
+  for ((spec, i) <- redIntRat.io.specWritePorts.zipWithIndex) {
+    spec.wen  := io.rabCommits.isWalk && io.rabCommits.walkValid(i) && io.rabCommits.info(i).rfWen && io.rabCommits.info(i).isRedundant
+    spec.addr := io.rabCommits.info(i).ldest
+    spec.data := io.rabCommits.info(i).pdest
+  }
+  for ((spec, i) <- redFpRat.io.specWritePorts.zipWithIndex) {
+    spec.wen  := io.rabCommits.isWalk && io.rabCommits.walkValid(i) && io.rabCommits.info(i).fpWen && io.rabCommits.info(i).isRedundant
+    spec.addr := io.rabCommits.info(i).ldest
+    spec.data := io.rabCommits.info(i).pdest
+  }
+  for ((spec, i) <- redVecRat.io.specWritePorts.zipWithIndex) {
+    spec.wen  := io.rabCommits.isWalk && io.rabCommits.walkValid(i) && io.rabCommits.info(i).vecWen && io.rabCommits.info(i).isRedundant
+    spec.addr := io.rabCommits.info(i).ldest
+    spec.data := io.rabCommits.info(i).pdest
+  }
+  for ((spec, i) <- redV0Rat.io.specWritePorts.zipWithIndex) {
+    spec.wen  := io.rabCommits.isWalk && io.rabCommits.walkValid(i) && io.rabCommits.info(i).v0Wen && io.rabCommits.info(i).isRedundant
+    spec.addr := io.rabCommits.info(i).ldest
+    spec.data := io.rabCommits.info(i).pdest
+  }
+  for (spec <- redVlRat.io.specWritePorts) {
+    spec.wen  := false.B
+    spec.addr := 0.U
+    spec.data := 0.U
+  }
+
+  // Expose redundant RAT old_pdest and need_free for FreeList recycling
+  io.red_int_old_pdest := redIntRat.io.old_pdest
+  io.red_int_need_free := redIntRat.io.need_free
+  io.red_fp_old_pdest  := redFpRat.io.old_pdest
+  io.red_vec_old_pdest := redVecRat.io.old_pdest
+  io.red_v0_old_pdest  := redV0Rat.io.old_pdest
+  io.red_vl_old_pdest  := redVlRat.io.old_pdest
 
   // Rename speculative writes from redundant thread (highest priority)
   for ((spec, rename) <- redIntRat.io.specWritePorts.zip(io.redIntRenamePorts)) {
