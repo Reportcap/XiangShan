@@ -108,10 +108,7 @@ class DecodeStage(implicit p: Parameters) extends XSModule
   private val outValid = VecInit(outValids).asUInt.orR
   //readyFromRename Counter
   /** Assume number of ready channels be "RenameWidth" if the first output channel is ready. If not, assume that be 0 */
-  // When redundant thread duplication is enabled, we only accept DecodeWidth/2 primary instructions
-  // since each non-CF instruction is duplicated (main + redundant) to fill DecodeWidth output slots.
-  private val maxPrimaryInput = DecodeWidth / 2
-  val readyCounter = Mux(outReadys.head, maxPrimaryInput.U, 0.U)
+  val readyCounter = Mux(outReadys.head, RenameWidth.U, 0.U)
 
   /** complex decoder */
   val decoderComp = Module(new DecodeUnitComp)
@@ -241,51 +238,24 @@ class DecodeStage(implicit p: Parameters) extends XSModule
   }
 
   /**
-   * Generate output of DecodeStage with redundant thread duplication.
-   *
-   * Strategy: take first maxPrimaryInput (DecodeWidth/2) decoded instructions as primary.
-   * For each primary instruction k (0..maxPrimaryInput-1):
-   *   - Output slot 2k:   main copy  (threadId=0)
-   *   - Output slot 2k+1: redundant copy (threadId=1), only if primary is valid and non-CF
-   * CF instructions (brh/jmp) are not duplicated — redundant slot is left invalid.
-   *
-   * This halves decode throughput but enables redundant thread verification.
+   * Generate output of DecodeStage. Pass finalDecodedInst to output as decoded instructions.
+   * Note that finalDecodedInst is generated in order.
    */
-  private def isCFInst(uop: DecodeOutUop): Bool = {
-    FuType.isBJU(uop.fuType)
-  }
-
-  for (k <- 0 until maxPrimaryInput) {
-    val primary = finalDecodedInst(k)
-    val primaryValid = finalDecodedInstValid(k) && !io.fromRob.isResumeVType
-    val nonCF = !isCFInst(primary)
-
-    // --- Helper: apply common field adjustments ---
-    def applyCommonFields(outInst: DecoupledIO[DecodeOutUop], src: DecodeOutUop, threadIdVal: UInt): Unit = {
-      outInst.bits := src
-      outInst.bits.lsrc(0) := Mux(src.vpu.isReverse, src.lsrc(1), src.lsrc(0))
-      outInst.bits.lsrc(1) := Mux(src.vpu.isReverse, src.lsrc(0), src.lsrc(1))
-      outInst.bits.srcType(0) := Mux(src.vpu.isReverse, src.srcType(1), src.srcType(0))
-      outInst.bits.srcType(1) := Mux(src.vpu.isReverse, src.srcType(0), src.srcType(1))
-      outInst.bits.v0Wen := src.vecWen && src.ldest === 0.U || src.v0Wen
-      outInst.bits.vecWen := src.vecWen && src.ldest =/= 0.U
-      val srcType0123HasV0 = src.srcType.zip(src.lsrc).take(4).map { case (s, l) =>
-        SrcType.isVp(s) && (l === 0.U)
-      }.reduce(_ || _)
-      outInst.bits.srcType(3) := Mux(srcType0123HasV0, SrcType.v0, src.srcType(3))
-      outInst.bits.debug.foreach(_.debug_seqNum.uopIdx := outInst.bits.uopIdx)
-      outInst.bits.threadId := threadIdVal
-    }
-
-    // Main copy (even slot)
-    val mainOut = io.out(2 * k)
-    mainOut.valid := primaryValid
-    applyCommonFields(mainOut, primary, 0.U)
-
-    // Redundant copy (odd slot)
-    val redOut = io.out(2 * k + 1)
-    redOut.valid := primaryValid && nonCF
-    applyCommonFields(redOut, primary, 1.U)
+  io.out.zipWithIndex.foreach { case (inst, i) =>
+    inst.valid := finalDecodedInstValid(i) && !io.fromRob.isResumeVType
+    inst.bits := finalDecodedInst(i)
+    inst.bits.lsrc(0) := Mux(finalDecodedInst(i).vpu.isReverse, finalDecodedInst(i).lsrc(1), finalDecodedInst(i).lsrc(0))
+    inst.bits.lsrc(1) := Mux(finalDecodedInst(i).vpu.isReverse, finalDecodedInst(i).lsrc(0), finalDecodedInst(i).lsrc(1))
+    inst.bits.srcType(0) := Mux(finalDecodedInst(i).vpu.isReverse, finalDecodedInst(i).srcType(1), finalDecodedInst(i).srcType(0))
+    inst.bits.srcType(1) := Mux(finalDecodedInst(i).vpu.isReverse, finalDecodedInst(i).srcType(0), finalDecodedInst(i).srcType(1))
+    inst.bits.v0Wen := finalDecodedInst(i).vecWen && finalDecodedInst(i).ldest === 0.U || finalDecodedInst(i).v0Wen
+    inst.bits.vecWen := finalDecodedInst(i).vecWen && finalDecodedInst(i).ldest =/= 0.U
+    // when src0/src1/src2 read V0, src3 read V0
+    val srcType0123HasV0 = finalDecodedInst(i).srcType.zip(finalDecodedInst(i).lsrc).take(4).map { case (s, l) =>
+      SrcType.isVp(s) && (l === 0.U)
+    }.reduce(_ || _)
+    inst.bits.srcType(3) := Mux(srcType0123HasV0, SrcType.v0, finalDecodedInst(i).srcType(3))
+    inst.bits.debug.foreach(_.debug_seqNum.uopIdx := inst.bits.uopIdx)
   }
 
   io.out.map(x =>

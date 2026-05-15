@@ -604,6 +604,7 @@ class Ifu(implicit p: Parameters) extends IfuModule
   io.toIBuffer.bits.ftqPtr.zipWithIndex.foreach { case (ftqPtr, i) =>
     ftqPtr := Mux(s3_alignCompactInfo.selectBlock(i), s3_alignFetchBlock(1).ftqIdx, s3_alignFetchBlock(0).ftqIdx)
   }
+  io.toIBuffer.bits.isRedundantFetch := s3_alignFetchBlock(0).isRedundantFetch
 
   /* in s3, prevInstrCount equals to next cycle's IBuffer.numFromFetch without predChecker. "prev" means s2;
    * when s2 fire (s2_valid && s3_ready), use s2_instrCount;

@@ -133,6 +133,7 @@ object RobBundles extends HasCircularQueuePtrHelper {
     // debug_end
     val dirtyFs = Bool()
     val dirtyVs = Bool()
+    val isRedundant = Bool()
   }
 
   def connectEnq(robEntry: RobEntryBundle, robEnq: EnqRobUop): Unit = {
@@ -193,6 +194,7 @@ object RobBundles extends HasCircularQueuePtrHelper {
     robCommitEntry.commitType := robEntry.commitType
     robCommitEntry.dirtyFs := robEntry.fpWen || robEntry.wflags
     robCommitEntry.dirtyVs := robEntry.dirtyVs
+    robCommitEntry.isRedundant := robEntry.isRedundant
     robCommitEntry.needFlush := robEntry.needFlush
     robCommitEntry.crossFtqCommit := robEntry.crossFtqCommit
     robCommitEntry.traceBlockInPipe := robEntry.traceBlockInPipe

@@ -250,7 +250,7 @@ class Rename(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHe
     Mux(threadId(i), rat.io.redV0ReadPorts(i).data, v0ReadPortsData(i))
   ))
   private val muxedVlData = VecInit((0 until RenameWidth).map(i =>
-    Mux(threadId(i), rat.io.redVlReadPorts(i).data, vlReadPortsData(i))
+    Mux(threadId(i), rat.io.redVlReadPorts(i).data, vlReadPortsData(i).head)
   ))
 
   rat.io.snpt <> io.ratSnpt
@@ -591,7 +591,7 @@ class Rename(implicit p: Parameters) extends XSModule with HasCircularQueuePtrHe
     uops(i).psrc(1) := Mux1H(uops(i).srcType(1)(2, 0), Seq(muxedIntData(i)(1), muxedFpData(i)(1), muxedVecData(i)(1)))
     uops(i).psrc(2) := Mux1H(uops(i).srcType(2)(2, 1), Seq(muxedFpData(i)(2), muxedVecData(i)(2)))
     uops(i).psrc(3) := muxedV0Data(i)
-    uops(i).psrcVl := muxedVlData(i).head
+    uops(i).psrcVl := muxedVlData(i)
     uops(i).psrcIntForMove := muxedIntData(i).head
 
     // int psrc2 should be bypassed from next instruction if it is fused

@@ -213,9 +213,80 @@ class FrontendInlinedImp(outer: FrontendInlined) extends FrontendInlinedImpBase(
   // return safe only when both icache & instrUncache are safe, also only when has wfiReq (like, safe := wfiReq.fire)
   io.backend.wfi.wfiSafe := DelayN(wfiReq && icache.io.wfi.wfiSafe && instrUncache.io.wfi.wfiSafe, WfiSafePortDealy)
 
-  // IFU-Ftq
-  ifu.io.fromFtq <> ftq.io.toIfu
-  ftq.io.toIfu.req.ready := ifu.io.fromFtq.req.ready && icache.io.fromFtq.fetchReq.ready
+  // ---------------------------------------------------------------------------
+  // FetchLog: records PCs from main thread fetch requests for redundant re-fetch
+  // ---------------------------------------------------------------------------
+  private val FetchLogSize = 16
+  private val fetchLog     = Mem(FetchLogSize, UInt(VAddrBits.W))
+  private val fetchLogWrPtr = RegInit(0.U(log2Ceil(FetchLogSize).W))
+  private val fetchLogRdPtr = RegInit(0.U(log2Ceil(FetchLogSize).W))
+  private val fetchLogHasData = fetchLogWrPtr =/= fetchLogRdPtr
+
+  // ---------------------------------------------------------------------------
+  // RFC (Redundant Fetch Controller)
+  // Monitors frontend idle slots and inserts redundant fetch requests.
+  // PC source: FetchLog circular buffer (captures main thread fetch PCs).
+  // Enabled for verification: rfcEnable = true.B.
+  // ---------------------------------------------------------------------------
+
+  private val rfcBusy    = RegInit(false.B)
+  private val rfcEnable  = true.B // enabled for verification
+
+  // Frontend idle: FTQ has no request, no pending flush/redirect
+  private val frontendIdle = !ftq.io.toIfu.req.valid &&
+    !needFlush &&
+    !io.backend.toFtq.redirect.valid
+
+  // FetchLog write: capture PC when main thread fetch fires
+  private val mainFtqReq = ftq.io.toIfu.req
+
+  // Build redundant fetch request (defined before state machine for .fire reference)
+  private val redundantFetchReq = Wire(Decoupled(chiselTypeOf(ftq.io.toIfu.req.bits)))
+  private val selectRedundant = !mainFtqReq.valid && redundantFetchReq.valid
+
+  redundantFetchReq.valid := rfcBusy
+  redundantFetchReq.bits := 0.U.asTypeOf(chiselTypeOf(ftq.io.toIfu.req.bits))
+  redundantFetchReq.bits.fetch(0).valid            := true.B
+  redundantFetchReq.bits.fetch(0).startVAddr       := fetchLog.read(fetchLogRdPtr)
+  redundantFetchReq.bits.fetch(0).nextCachelineVAddr := fetchLog.read(fetchLogRdPtr) + (CacheLineSize / 8).U
+  redundantFetchReq.bits.fetch(0).nextStartVAddr   := fetchLog.read(fetchLogRdPtr) + FetchBlockSize.U
+  redundantFetchReq.bits.fetch(0).ftqIdx           := 0.U.asTypeOf(chiselTypeOf(ftq.io.toIfu.req.bits.fetch(0).ftqIdx))
+  redundantFetchReq.bits.fetch(0).takenCfiOffset.valid := false.B
+  redundantFetchReq.bits.fetch(0).isRedundantFetch := true.B
+
+  // RFC state machine
+  when(rfcBusy) {
+    when(redundantFetchReq.fire) {
+      rfcBusy := false.B
+      fetchLogRdPtr := fetchLogRdPtr + 1.U
+    }
+    when(needFlush || io.backend.toFtq.redirect.valid) {
+      rfcBusy := false.B
+      fetchLogRdPtr := fetchLogWrPtr // flush all buffered PCs
+    }
+  }.elsewhen(rfcEnable && frontendIdle && fetchLogHasData) {
+    rfcBusy := true.B
+  }
+
+  // FetchLog write: after mainFtqReq fires
+  when(mainFtqReq.fire) {
+    fetchLog.write(fetchLogWrPtr, mainFtqReq.bits.fetch(0).startVAddr.toUInt)
+    fetchLogWrPtr := fetchLogWrPtr + 1.U
+  }
+
+  // Flush FetchLog on redirect
+  when(needFlush || io.backend.toFtq.redirect.valid) {
+    fetchLogRdPtr := fetchLogWrPtr
+  }
+
+  // Request source MUX: main FTQ request has priority
+  ifu.io.fromFtq.req.valid       := mainFtqReq.valid || redundantFetchReq.valid
+  ifu.io.fromFtq.req.bits        := Mux(selectRedundant, redundantFetchReq.bits, mainFtqReq.bits)
+  ifu.io.fromFtq.redirect        <> ftq.io.toIfu.redirect
+  ifu.io.fromFtq.flushFromBpu    <> ftq.io.toIfu.flushFromBpu
+  mainFtqReq.ready                := ifu.io.fromFtq.req.ready && !selectRedundant
+  redundantFetchReq.ready         := ifu.io.fromFtq.req.ready && selectRedundant
+  ftq.io.toIfu.req.ready         := ifu.io.fromFtq.req.ready && icache.io.fromFtq.fetchReq.ready && !selectRedundant
 
   ftq.io.fromIfu <> ifu.io.toFtq
   bpu.io.fromFtq <> ftq.io.toBpu
@@ -249,7 +320,14 @@ class FrontendInlinedImp(outer: FrontendInlined) extends FrontendInlinedImpBase(
   ifu.io.backendRedirectTopdown     := ftq.io.backendRedirectTopdown
   ibuffer.io.backendRedirectTopdown := ftq.io.backendRedirectTopdown
 
-  io.backend.cfVec <> ibuffer.io.out
+  // Output steering: filter out redundant fetch instructions from backend decode path
+  // Redundant instructions are discarded for now; future: route to comparison buffer
+  for (i <- 0 until DecodeWidth) {
+    val isRedundant = ibuffer.io.out(i).bits.isRedundantFetch
+    io.backend.cfVec(i).valid := ibuffer.io.out(i).valid && !isRedundant
+    io.backend.cfVec(i).bits  := ibuffer.io.out(i).bits
+    ibuffer.io.out(i).ready   := io.backend.cfVec(i).ready
+  }
   io.backend.stallReason <> ibuffer.io.stallReason
 
   instrUncache.io.fromIfu <> ifu.io.toUncache

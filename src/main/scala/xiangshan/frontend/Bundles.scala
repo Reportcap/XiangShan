@@ -75,6 +75,7 @@ class FetchRequestBundle(implicit p: Parameters) extends FrontendBundle with ICa
   // slow path
   val ftqIdx:         FtqPtr      = new FtqPtr
   val takenCfiOffset: Valid[UInt] = Valid(UInt(CfiPositionWidth.W))
+  val isRedundantFetch: Bool      = Bool()
 
   def crossCacheline: Bool = super.isCrossLine(this.startVAddr, this.takenCfiOffset.bits)
 
@@ -341,6 +342,7 @@ class FetchToIBuffer(implicit p: Parameters) extends FrontendBundle {
   val debug_seqNum:   Vec[InstSeqNum]       = Vec(IBufferEnqueueWidth, InstSeqNum())
   val ftqPtr:         Vec[FtqPtr]           = Vec(IBufferEnqueueWidth, new FtqPtr)
   val topdownInfo:    FrontendTopDownBundle = new FrontendTopDownBundle
+  val isRedundantFetch: Bool                = Bool()
 }
 
 class IfuToBackendIO(implicit p: Parameters) extends FrontendBundle {

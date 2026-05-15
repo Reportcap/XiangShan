@@ -74,6 +74,7 @@ class FetchBlockInfo(implicit p: Parameters) extends IfuBundle {
   val rawInstrEndVec: UInt        = UInt(FetchBlockInstNum.W)
   val pcHighPlus1:    UInt        = UInt((VAddrBits - PcCutPoint).W)
   val fetchSize:      UInt        = UInt(log2Ceil(FetchBlockInstNum + 1).W)
+  val isRedundantFetch: Bool      = Bool()
 
   def pcHigh: UInt = startVAddr(VAddrBits - 1, PcCutPoint)
 
@@ -104,6 +105,7 @@ class FetchBlockInfo(implicit p: Parameters) extends IfuBundle {
     target         := ftqFetch.nextStartVAddr
     pcHighPlus1    := ftqFetch.startVAddr(VAddrBits - 1, PcCutPoint) + 1.U
     fetchSize      := calcFetchSize
+    isRedundantFetch := ftqFetch.isRedundantFetch
     this
   }
 }
