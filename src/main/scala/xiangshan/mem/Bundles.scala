@@ -37,11 +37,11 @@ object Bundles {
 
   object StLdNukeMatchType {
     def Normal      = "b00".U
-    def QuadWord    = "b01".U
+    def OctaWord    = "b01".U
     def CacheLine   = "b10".U
 
     def isNormal(matchType: UInt)    = matchType === Normal
-    def isQuadWord(matchType: UInt)  = matchType === QuadWord
+    def isOctaWord(matchType: UInt)  = matchType === OctaWord
     def isCacheLine(matchType: UInt) = matchType === CacheLine
 
     def apply() = UInt(2.W)
@@ -273,6 +273,11 @@ object Bundles {
     val s1Req = Output(new StoreForwardReqS1)
     val s1Kill = Output(Bool())
     val s2Resp = Flipped(ValidIO(new SbufferForwardResp))
+  }
+
+  class SbufferForwardReq(implicit p: Parameters) extends XSBundle {
+    val s0Req = ValidIO(new StoreForwardReqS0)
+    val s1Req = Output(new StoreForwardReqS1)
   }
 
   class SQForward(implicit p: Parameters) extends XSBundle {
@@ -569,7 +574,7 @@ class DifftestPmaStoreIO(implicit p: Parameters) extends XSBundle {
 }
 
 class DiffStoreIO(implicit p: Parameters) extends XSBundle{
-  val diffInfo = Vec(EnsbufferWidth, Flipped(new ToSbufferDifftestInfoBundle()))
-  val pmaStore = Vec(EnsbufferWidth, Flipped(Valid(new DifftestPmaStoreIO)))
-  val ncStore = Flipped(Valid(new UncacheWordReq()))
+  val diffInfo       = Vec(EnsbufferWidth, Input(new ToSbufferDifftestInfoBundle()))
+  val cacheableStore = Vec(EnsbufferWidth, Flipped(ValidIO(new DifftestPmaStoreIO)))
+  val ncStore        = Flipped(Valid(new UncacheWordReq()))
 }

@@ -332,6 +332,8 @@ case class L2CacheConfig
   inclusive: Boolean = true,
   banks: Int = 1,
   tp: Boolean = true,
+  nl: Boolean = false, 
+  enablePC: Boolean = false, // Enable PC field for L1Param
   enableFlush: Boolean = false
 ) extends Config((site, here, up) => {
   case XSTileKey =>
@@ -353,6 +355,7 @@ case class L2CacheConfig
           ways = p.dcacheParametersOpt.get.nWays + 2,
           aliasBitsOpt = p.dcacheParametersOpt.get.aliasBitsOpt,
           vaddrBitsOpt = Some(p.GPAddrBitsSv48x4 - log2Up(p.dcacheParametersOpt.get.blockBytes)),
+          pcBitOpt = if (enablePC) Some(p.GPAddrBitsSv48x4) else None, // Enable PC field if needed
           isKeywordBitsOpt = p.dcacheParametersOpt.get.isKeywordBitsOpt
         )),
         reqField = Seq(utility.ReqSourceField()),
@@ -365,6 +368,7 @@ case class L2CacheConfig
         enablePoison = true,
         prefetch = Seq(BOPParameters()) ++
           (if (tp) Seq(TPParameters()) else Nil) ++
+          (if (nl) Seq(NLParameters()) else Nil) ++
           (if (p.prefetcher.nonEmpty) Seq(PrefetchReceiverParams()) else Nil),
         enableL2Flush = enableFlush,
         enablePerf = !site(DebugOptionsKey).FPGAPlatform && site(DebugOptionsKey).EnablePerfDebug,
@@ -502,6 +506,7 @@ class CHIBackendV2Config(n: Int = 1) extends Config(
     case XSTileKey => up(XSTileKey).map { p =>
       p.copy(
         EnableBackendV2Config = true,
+        EnableDispatchIQBalanceOpt = false,
         frontendParameters = p.frontendParameters.copy(
           ibufferParameters = p.frontendParameters.ibufferParameters.copy(
             NumReadBank = 6

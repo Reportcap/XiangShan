@@ -122,6 +122,7 @@ package object xiangshan {
     def vsse      = "b10_10_00000".U // strided
     def vsoxe     = "b10_11_00000".U // index
 
+    def isUnitStride(fuOpType: UInt): Bool = fuOpType(6, 5) === "b00".U
     def isWhole  (fuOpType: UInt): Bool = fuOpType(6, 5) === "b00".U && fuOpType(4, 0) === "b01000".U && (fuOpType(8) ^ fuOpType(7))
     def isMasked (fuOpType: UInt): Bool = fuOpType(6, 5) === "b00".U && fuOpType(4, 0) === "b01011".U && (fuOpType(8) ^ fuOpType(7))
     def isStrided(fuOpType: UInt): Bool = fuOpType(6, 5) === "b10".U && (fuOpType(8) ^ fuOpType(7))
@@ -977,10 +978,13 @@ package object xiangshan {
     // backend
     // long inst stall at rob head
     val DivStall = Value("DivStall") // int div, float div/sqrt
-    val IntNotReadyStall = Value("IntNotReadyStall") // int-inst at rob head not issue
-    val FPNotReadyStall = Value("FPNotReadyStall") // fp-inst at rob head not issue
-    val MemNotReadyStall = Value("MemNotReadyStall") // mem-inst at rob head not issue
+    val IntNotReadyStall = Value("IntNotReadyStall") // int-inst at rob head exec long
+    val FPNotReadyStall = Value("FPNotReadyStall") // fp-inst at rob head exec long
+    val MemNotReadyStall = Value("MemNotReadyStall") // mem-inst at rob head exec long
+    val OtherNotReadyStall = Value("OtherNotReadyStall")
     val RobStall = Value("RobStall")
+    val LqStall = Value("LqStall")
+    val SqStall = Value("SqStall")
     // freelist full
     val IntFlStall = Value("IntFlStall")
     val FpFlStall = Value("FpFlStall")
@@ -1004,6 +1008,7 @@ package object xiangshan {
     val BalanceDispatchPolicyStallVec = Value("BalanceDispatchPolicyStallVec")
     val BalanceDispatchPolicyStallLoad = Value("BalanceDispatchPolicyStallLoad")
     val BalanceDispatchPolicyStallStore = Value("BalanceDispatchPolicyStallStore")
+    val OtherBalanceDispatchPolicyStall = Value("OtherBalanceDispatchPolicyStall")
     val IQEnqPolicyStallIssued = Value("IQEnqPolicyStallIssued")
     val IQEnqPolicyStall = Value("IQEnqPolicyStall")
     val IntIQFullStallAlu = Value("IntIQFullStallAlu")

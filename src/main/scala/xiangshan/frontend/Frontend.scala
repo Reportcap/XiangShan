@@ -289,6 +289,7 @@ class FrontendInlinedImp(outer: FrontendInlined) extends FrontendInlinedImpBase(
   ftq.io.toIfu.req.ready         := ifu.io.fromFtq.req.ready && icache.io.fromFtq.fetchReq.ready && !selectRedundant
 
   ftq.io.fromIfu <> ifu.io.toFtq
+
   bpu.io.fromFtq <> ftq.io.toBpu
   ftq.io.fromBpu <> bpu.io.toFtq
 
@@ -296,6 +297,7 @@ class FrontendInlinedImp(outer: FrontendInlined) extends FrontendInlinedImpBase(
   icache.io.fromFtq <> ftq.io.toICache
   // override fetchReq.ready to sync with Ifu
   ftq.io.toICache.fetchReq.ready := ifu.io.fromFtq.req.ready && icache.io.fromFtq.fetchReq.ready
+  ftq.io.fromICache.fromPrefetch := icache.io.toFtq.fromPrefetch
   icache.io.flush                := DontCare
 
   // Ifu-ICache

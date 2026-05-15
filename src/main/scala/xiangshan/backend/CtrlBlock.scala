@@ -40,6 +40,7 @@ import xiangshan.backend.issue.{FpScheduler, IntScheduler, VecScheduler}
 import xiangshan.backend.trace._
 import xiangshan.frontend.bpu.BranchAttribute
 import xiangshan.Redirect.findOldestRedirect
+import xiangshan.TopDownCounters._
 
 class CtrlToFtqIO(implicit p: Parameters) extends XSBundle {
   val redirect = Valid(new Redirect)
@@ -152,6 +153,14 @@ class CtrlBlockImp(
   }
 
   val wbData = io.fromWB.wbData
+  val needPerfCounterExuName = Seq("ALU", "BJU", "LDU", "FEX", "STA", "STD")
+  needPerfCounterExuName.map { name =>
+    val exuWBValid = params.allExuParams.zip(delayedWriteBack).filter(_._1.name.contains(name)).map(_._2).map(_.valid)
+    val exuNum = exuWBValid.size
+    for (i <- 0 to exuNum) {
+      XSPerfAccumulate(s"${name}_SameWBNum_$i", PopCount(exuWBValid) === i.U)
+    }
+  }
   val intScheWbData = io.fromWB.wbData.filter(_.bits.params.schdType.isInstanceOf[IntScheduler])
   val fpScheWbData = io.fromWB.wbData.filter(_.bits.params.schdType.isInstanceOf[FpScheduler])
   val vfScheWbData = io.fromWB.wbData.filter(_.bits.params.schdType.isInstanceOf[VecScheduler])
@@ -738,12 +747,12 @@ class CtrlBlockImp(
   dispatch.io.wbPregsV0 := io.toDispatch.wbPregsV0
   dispatch.io.wbPregsVl := io.toDispatch.wbPregsVl
   dispatch.io.vlWriteBackInfo := io.toDispatch.vlWriteBackInfo
-  dispatch.io.robHeadNotReady := rob.io.headNotReady
   dispatch.io.singleStep := GatedValidRegNext(io.csrCtrl.singlestep)
   dispatch.io.debugBlockBackward.foreach(_ := rob.io.debugBlockBackward.get)
   dispatch.io.debugWaitForward.foreach(_ := rob.io.debugWaitForward.get)
   dispatch.io.debugIQValidNumVec.foreach(_ := io.toDispatch.debugIQValidNumVec.get)
   dispatch.io.debugIQEnqHasIssuedVec.foreach(_ := io.toDispatch.debugIQEnqHasIssuedVec.get)
+  dispatch.io.debugRobHeadStall.foreach(_ := rob.io.debugRobHeadStall.get)
   val toIssueBlockUops = Seq(io.toIssueBlock.intUops, io.toIssueBlock.fpUops, io.toIssueBlock.vfUops).flatten
   println(s"[CtrlBlock] toIssueBlockUops.size = ${toIssueBlockUops.size}")
   println(s"[CtrlBlock] io.toIssueBlock.intUops.size = ${io.toIssueBlock.intUops.size}")
@@ -782,7 +791,7 @@ class CtrlBlockImp(
   rob.io.csr.wfiEvent := io.robio.csr.wfiEvent
   rob.io.wfi_enable := decode.io.csrCtrl.wfi_enable
 
-  io.toTop.cpuHalt := DelayN(rob.io.cpu_halt, 5)
+  io.toTop.cpuWfi := DelayN(rob.io.cpu_wfi, 5)
 
   io.robio.csr.perfinfo.retiredInstr <> RegNext(rob.io.csr.perfinfo.retiredInstr)
   io.robio.exception := rob.io.exception
@@ -806,6 +815,7 @@ class CtrlBlockImp(
   rob.io.csr.criticalErrorState := io.robio.csr.criticalErrorState
   rob.io.debugEnqLsq := io.debugEnqLsq
   rob.io.debugInstrAddrTransType := io.fromCSR.instrAddrTransType
+  rob.io.debugIQDeqRobIdxVec.foreach(_ := io.robio.debugIQDeqRobIdxVec.get)
 
   io.robio.robDeqPtr := rob.io.robDeqPtr
 
@@ -827,9 +837,30 @@ class CtrlBlockImp(
   io.toVecExcpMod.ratOldPest := rename.io.ratOldPdest
 
   io.debugTopDown.fromRob := rob.io.debugTopDown.toCore
-  dispatch.io.debugTopDown.fromRob := rob.io.debugTopDown.toDispatch
-  dispatch.io.debugTopDown.fromCore := io.debugTopDown.fromCore
   io.debugRolling := rob.io.debugRolling
+  // mem topdown reason collect
+  val notIssue = !rob.io.debugTopDown.toDispatch.robHeadLsIssue
+  val tlbReplay = io.debugTopDown.fromCore.fromMem.robHeadTlbReplay
+  val tlbMiss = io.debugTopDown.fromCore.fromMem.robHeadTlbMiss
+  val vioReplay = io.debugTopDown.fromCore.fromMem.robHeadLoadVio
+  val mshrReplay = io.debugTopDown.fromCore.fromMem.robHeadLoadMSHR
+  val l1Miss = io.debugTopDown.fromCore.fromMem.robHeadMissInDCache
+  val l2Miss = io.debugTopDown.fromCore.l2MissMatch
+  val l3Miss = io.debugTopDown.fromCore.l3MissMatch
+  val ldReason = Mux(l3Miss, LoadMemStall.id.U,
+    Mux(l2Miss, LoadL3Stall.id.U,
+      Mux(l1Miss, LoadL2Stall.id.U,
+        Mux(notIssue, MemNotReadyStall.id.U,
+          Mux(tlbMiss, LoadTLBStall.id.U,
+            Mux(tlbReplay, LoadTLBStall.id.U,
+              Mux(mshrReplay, LoadMSHRReplayStall.id.U,
+                Mux(vioReplay, LoadVioReplayStall.id.U,
+                  LoadL1Stall.id.U))))))))
+  dispatch.io.debugLoadReason.foreach(_ := ldReason)
+  dispatch.io.debugRobTrueCommit.foreach(_ := rob.io.debugTopDown.toDispatch.robTrueCommit)
+  rename.io.debugLoadReason.foreach(_ := ldReason)
+  rename.io.debugRobHeadFuType.foreach(_ := rob.io.debugRobHeadFuType)
+  rename.io.debugRobHeadStall.foreach(_ := rob.io.debugRobHeadStall.get)
 
   io.perfInfo.ctrlInfo.robFull := GatedValidRegNext(rob.io.robFull)
   io.perfInfo.ctrlInfo.intdqFull := false.B
@@ -848,7 +879,7 @@ class CtrlBlockIO()(implicit p: Parameters, params: BackendParams) extends XSBun
     val hartId = Input(UInt(8.W))
   }
   val toTop = new Bundle {
-    val cpuHalt = Output(Bool())
+    val cpuWfi = Output(Bool())
   }
   val frontend = Flipped(new FrontendToCtrlIO())
   val fromBJUResolve = Flipped(Vec(backendParams.BrhCnt, Valid(new Resolve)))
@@ -930,6 +961,7 @@ class CtrlBlockIO()(implicit p: Parameters, params: BackendParams) extends XSBun
   val memHyPcRead = Vec(params.HyuCnt, Flipped(new FtqRead(UInt(VAddrBits.W))))
 
   val csrCtrl = Input(new CustomCSRCtrlIO)
+  val IssueQueueDeqSum  = backendParams.allIssueParams.map(_.numDeq).sum
   val robio = new Bundle {
     val csr = new RobCSRIO
     val exception = ValidIO(new ExceptionInfo)
@@ -947,6 +979,7 @@ class CtrlBlockIO()(implicit p: Parameters, params: BackendParams) extends XSBun
       val robidx = Input(new RobPtr)
       val pc     = Output(UInt(VAddrBits.W))
     })
+    val debugIQDeqRobIdxVec = Option.when(backendParams.debugEn)(Vec(IssueQueueDeqSum, Flipped(ValidIO(new RobPtr()))))
   }
 
   val toDecode = new Bundle {
