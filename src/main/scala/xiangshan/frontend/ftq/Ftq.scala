@@ -92,6 +92,10 @@ class Ftq(implicit p: Parameters) extends FtqModule
   private val ifuWbPtr  = RegInit(FtqPtrVec())
   private val commitPtr = RegInit(FtqPtrVec(2))
 
+  // Redundant thread pointers
+  private val redPtr     = RegInit(FtqPtrVec(2))
+  private val checkokPtr = RegInit(FtqPtrVec())
+
   XSError(bpuPtr < ifuPtr && !isFull(bpuPtr(0), ifuPtr(0)), "ifuPtr runs ahead of bpuPtr")
   // TODO: Reconsider this
 //  XSError(bpuPtr < pfPtr && !isFull(bpuPtr(0), pfPtr(0)), "pfPtr runs ahead of bpuPtr")
@@ -216,12 +220,24 @@ class Ftq(implicit p: Parameters) extends FtqModule
   // Interaction with ICache and IFU
   // --------------------------------------------------------------------------------
 
+  // Redundant fetch arbitration: compute early for pointer advancement
+  // Full ifuReqValid / redFetchValid are computed later, but selectRedundant
+  // is a Wire so it can be used before its definition site in Chisel.
+  private val selectRedundant = Wire(Bool())
+
   when(io.toICache.toPrefetch.fire) {
     val twoPrefetchValid = io.toICache.toPrefetch.bits.twoPrefetchCase.valid
     pfPtr := Mux(twoPrefetchValid, pfPtr + 2.U, pfPtr + 1.U)
   }
-  when(io.toIfu.req.fire) {
+  when(io.toIfu.req.fire && !selectRedundant) {
     ifuPtr := ifuPtr + 1.U
+  }
+  when(io.toIfu.req.fire && selectRedundant) {
+    redPtr := redPtr + 1.U
+  }
+  // Redundant thread: checkokPtr follows commitPtr (experimental; will be driven by store comparison later)
+  when(commit) {
+    checkokPtr := checkokPtr + 1.U
   }
 
   // TODO: wait for Ifu/ICache to remove bpu s2 flush
@@ -299,26 +315,60 @@ class Ftq(implicit p: Parameters) extends FtqModule
   private val ifuReqValid = bpuPtr(0) > ifuPtr(0) && !redirect.valid &&
     distanceBetween(ifuPtr(0), commitPtr(0)) < (FtqSize - 1).U
 
-  io.toICache.fetchReq.valid                   := ifuReqValid
-  io.toICache.fetchReq.bits.startVAddr         := entryQueue(ifuPtr(0).value).startPc
-  io.toICache.fetchReq.bits.nextCachelineVAddr := entryQueue(ifuPtr(0).value).startPc + (CacheLineSize / 8).U
-  io.toICache.fetchReq.bits.ftqIdx             := ifuPtr(0)
-  io.toICache.fetchReq.bits.takenCfiOffset     := entryQueue(ifuPtr(0).value).takenCfiOffset.bits
-  io.toICache.fetchReq.bits.isBackendException := backendException.hasException && backendExceptionPtr === ifuPtr(0)
+  // Redundant fetch: only when main thread is idle
+  private val redFetchValid = redPtr(0) < bpuPtr(0) && !redirect.valid && !ifuReqValid
+  selectRedundant := !ifuReqValid && redFetchValid
 
-  io.toIfu.req.valid                    := ifuReqValid
-  io.toIfu.req.bits.fetch(0).valid      := ifuReqValid
-  io.toIfu.req.bits.fetch(0).startVAddr := entryQueue(ifuPtr(0).value).startPc
-  io.toIfu.req.bits.fetch(0).nextStartVAddr := MuxCase(
-    entryQueue(ifuPtr(1).value).startPc,
-    Seq(
-      (bpuPtr(0) === ifuPtr(0)) -> prediction.bits.target,
-      (bpuPtr(0) === ifuPtr(1)) -> prediction.bits.startPc
+  // ICache fetch request
+  io.toICache.fetchReq.valid := ifuReqValid || redFetchValid
+  io.toICache.fetchReq.bits.startVAddr := Mux(selectRedundant,
+    entryQueue(redPtr(0).value).startPc,
+    entryQueue(ifuPtr(0).value).startPc
+  )
+  io.toICache.fetchReq.bits.nextCachelineVAddr := Mux(selectRedundant,
+    entryQueue(redPtr(0).value).startPc + (CacheLineSize / 8).U,
+    entryQueue(ifuPtr(0).value).startPc + (CacheLineSize / 8).U
+  )
+  io.toICache.fetchReq.bits.ftqIdx := Mux(selectRedundant, redPtr(0), ifuPtr(0))
+  io.toICache.fetchReq.bits.takenCfiOffset := Mux(selectRedundant,
+    entryQueue(redPtr(0).value).takenCfiOffset.bits,
+    entryQueue(ifuPtr(0).value).takenCfiOffset.bits
+  )
+  io.toICache.fetchReq.bits.isBackendException := Mux(selectRedundant,
+    false.B,
+    backendException.hasException && backendExceptionPtr === ifuPtr(0)
+  )
+
+  // IFU fetch request
+  io.toIfu.req.valid := ifuReqValid || redFetchValid
+  io.toIfu.req.bits.fetch(0).valid := ifuReqValid || redFetchValid
+  io.toIfu.req.bits.fetch(0).startVAddr := Mux(selectRedundant,
+    entryQueue(redPtr(0).value).startPc,
+    entryQueue(ifuPtr(0).value).startPc
+  )
+  io.toIfu.req.bits.fetch(0).nextStartVAddr := Mux(selectRedundant,
+    MuxCase(
+      entryQueue(redPtr(1).value).startPc,
+      Seq(
+        (bpuPtr(0) === redPtr(0)) -> prediction.bits.target,
+        (bpuPtr(0) === redPtr(1)) -> prediction.bits.startPc
+      )
+    ),
+    MuxCase(
+      entryQueue(ifuPtr(1).value).startPc,
+      Seq(
+        (bpuPtr(0) === ifuPtr(0)) -> prediction.bits.target,
+        (bpuPtr(0) === ifuPtr(1)) -> prediction.bits.startPc
+      )
     )
   )
   io.toIfu.req.bits.fetch(0).nextCachelineVAddr := io.toIfu.req.bits.fetch(0).startVAddr + (CacheLineSize / 8).U
-  io.toIfu.req.bits.fetch(0).ftqIdx             := ifuPtr(0)
-  io.toIfu.req.bits.fetch(0).takenCfiOffset     := entryQueue(ifuPtr(0).value).takenCfiOffset
+  io.toIfu.req.bits.fetch(0).ftqIdx := Mux(selectRedundant, redPtr(0), ifuPtr(0))
+  io.toIfu.req.bits.fetch(0).takenCfiOffset := Mux(selectRedundant,
+    entryQueue(redPtr(0).value).takenCfiOffset,
+    entryQueue(ifuPtr(0).value).takenCfiOffset
+  )
+  io.toIfu.req.bits.fetch(0).isRedundantFetch := selectRedundant
 
   io.toIfu.req.bits.fetch(1) := 0.U.asTypeOf(new FetchRequestBundle)
 
@@ -343,6 +393,10 @@ class Ftq(implicit p: Parameters) extends FtqModule
       redirect.bits.ftqIdx + 1.U
     )
     Seq(bpuPtr, ifuPtr, pfPtr).foreach(_ := newEntryPtr)
+    // Redundant thread redirect: only if redPtr has passed the redirect point
+    when(redPtr(0) > newEntryPtr) {
+      redPtr := newEntryPtr
+    }
   }
 
   io.toIfu.redirect.valid := backendRedirect.valid

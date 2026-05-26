@@ -645,6 +645,7 @@ class Ifu(implicit p: Parameters) extends IfuModule
     a.offset     := s3_alignCompactInfo.instrEndOffset(i)
   }
   io.toIBuffer.bits.foldpc := s3_alignFoldPc
+  io.toIBuffer.bits.isRedundantFetch := s3_alignFetchBlock(0).isRedundantFetch
   // mark the exception only on first instruction
   io.toIBuffer.bits.exceptionType := s3_icacheMeta(0).exception || s3_rvcException
   // backendException only needs to be set for the first instruction.

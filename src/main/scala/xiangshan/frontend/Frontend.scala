@@ -253,7 +253,13 @@ class FrontendInlinedImp(outer: FrontendInlined) extends FrontendInlinedImpBase(
   ifu.io.backendRedirectTopdown     := ftq.io.backendRedirectTopdown
   ibuffer.io.backendRedirectTopdown := ftq.io.backendRedirectTopdown
 
-  io.backend.cfVec <> ibuffer.io.out
+  // Redundant instruction filtering: discard isRedundantFetch at IBuffer output
+  for (i <- 0 until DecodeWidth) {
+    val isRedundant = ibuffer.io.out(i).bits.isRedundantFetch
+    io.backend.cfVec(i).valid := ibuffer.io.out(i).valid && !isRedundant
+    io.backend.cfVec(i).bits  := ibuffer.io.out(i).bits
+    ibuffer.io.out(i).ready   := io.backend.cfVec(i).ready || isRedundant
+  }
   io.backend.stallReason <> ibuffer.io.stallReason
 
   instrUncache.io.fromIfu <> ifu.io.toUncache

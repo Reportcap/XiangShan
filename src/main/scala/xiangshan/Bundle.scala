@@ -115,6 +115,7 @@ class CtrlFlow(implicit p: Parameters) extends XSBundle {
   val ftqOffset = UInt(FetchBlockInstOffsetWidth.W)
   val isLastInFtqEntry = Bool()
   val debug_seqNum = InstSeqNum()
+  val isRedundantFetch = Bool()
 }
 
 
